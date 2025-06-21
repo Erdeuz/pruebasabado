@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Juego con sprite de niña corriendo mirando a la derecha</title>
+  <style>
+    body, html {
+      margin: 0; padding: 0; overflow: hidden; background: #222;
+    }
+    #gameCanvas {
+      display: block; background: #333;
+    }
+    #info {
+      position: absolute;
+      top: 10px; left: 10px;
+      color: #fff;
+      font-family: sans-serif;
+      z-index: 10;
+    }
+  </style>
+</head>
+<body>
+  <div id="info">Pulsa ESPACIO o CLIC para saltar. Sprite generado por Canvas.</div>
+  <canvas id="gameCanvas"></canvas>
+  <script>
+  // ----------------------------------------
+  // CONFIGURACIÓN BÁSICA DE CANVAS Y JUEGO
+  // ----------------------------------------
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+  let cw = window.innerWidth, ch = window.innerHeight;
+  canvas.width = cw; canvas.height = ch;
+
+  let groundHeight = ch * 0.2;
+  // Tamaño base del sprite: altura del sprite en píxeles en pantalla = groundHeight * 1.0
+  let spriteHeight = groundHeight * 1.0;
+  // spriteWidth se calcula basándonos en el offscreen canvas
+  let spriteWidth = 0;
+  const playerX = () => cw * 0.1;
+  let playerY = ch - groundHeight - spriteHeight;
+
+  // Física de salto
+  let gravity = 0.0150 * ch;
+  let jumpVelocity = -3.2 * ch;
+  let vy = 0;
+  let onGround = true;
+
+  // Animación
+  let spriteFrames = []; // array de offscreen canvases con cada frame
+  const NUM_FRAMES = 4;
+  let currentFrame = 0;
+  let frameTimer = 0;
+  const FRAME_DURATION = 100; // ms por frame
+
+  // Obstáculos
+  let obstacles = [];
+  let spawnTimer = 0;
+  const spawnInterval0 = 1500;
+  let spawnInterval = spawnInterval0;
+  let speed = 0.9 * cw;
+  let score = 0;
+  let gameOver = false;
+  let lastTime = 0;
+
+  // ----------------------------------------
+  // 1) FUNCIÓN PARA DIBUJAR CADA FRAME
+  //    (niña de perfil corriendo, mirando a la derecha, con pelo largo)
+  // ----------------------------------------
+  /**
+   * Dibuja la niña de perfil corriendo en una postura dada,
+   * mirando siempre a la derecha.
+   * @param {CanvasRenderingContext2D} ctx 
+   * @param {number} size Altura de referencia (spriteHeight)
+   * @param {number} frameIndex Índice de frame 0..NUM_FRAMES-1
+   */
+  function drawGirlFrame(ctx, size, frameIndex) {
+    // Proporciones base:
+    // - Cabeza: radio = size * 0.20
+    // - Torso: ancho = size * 0.25, alto = size * 0.4
+    // - Piernas: largo desde cadera = size * 0.5
+    // - Brazos: largo desde hombro = size * 0.4
+    // - Pelo: más largo, ajustamos curvas para extender atrás de la cabeza en dirección opuesta a la mirada (izquierda).
+    const headR = size * 0.20;
+    const torsoW = size * 0.25;
+    const torsoH = size * 0.4;
+    const legLen = size * 0.5;
+    const armLen = size * 0.4;
+
+    // Puntos de unión:
+    // Origen (0,0) = cadera de la niña. De aquí se canaliza torso arriba, piernas abajo, brazos en hombros.
+    // Mirando a la derecha: todos los rasgos faciales se dibujan en el lado derecho de la cabeza.
+
+    // Ángulos para animación de carrera (4 frames)
+    const angles = [
+      // frame 0: pierna derecha adelante (hacia la derecha), pierna izquierda atrás; brazo derecho atrás, brazo izquierdo adelante
+      { legFront: 30 * Math.PI/180, legBack: -30 * Math.PI/180, armFront: -30 * Math.PI/180, armBack: 30 * Math.PI/180 },
+      // frame 1: cruce
+      { legFront: 10 * Math.PI/180, legBack: -10 * Math.PI/180, armFront: -10 * Math.PI/180, armBack: 10 * Math.PI/180 },
+      // frame 2: pierna izquierda adelante, pierna derecha atrás; brazo izquierdo atrás, brazo derecho adelante
+      { legFront: -30 * Math.PI/180, legBack: 30 * Math.PI/180, armFront: 30 * Math.PI/180, armBack: -30 * Math.PI/180 },
+      // frame 3: cruce inverso
+      { legFront: -10 * Math.PI/180, legBack: 10 * Math.PI/180, armFront: 10 * Math.PI/180, armBack: -10 * Math.PI/180 },
+    ];
+    const cfg = angles[ frameIndex % angles.length ];
+
+    // Limpiar el canvas donde se dibuja este frame:
+    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+
+    // Centramos la cadera en el offscreen canvas:
+    const cx = ctx.canvas.width / 2;
+    const cy = ctx.canvas.height * 0.8;
+    ctx.save();
+    ctx.translate(cx, cy);
+
+    // 1) Pierna trasera (legBack)
+    ctx.save();
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = Math.max(2, size * 0.03);
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.rotate(cfg.legBack);
+    ctx.lineTo(0, legLen);
+    ctx.stroke();
+    ctx.closePath();
+    // Pie
+    ctx.beginPath();
+    ctx.arc(0, legLen, size * 0.05, 0, Math.PI*2);
+    ctx.fillStyle = '#333';
+    ctx.fill();
+    ctx.closePath();
+    ctx.restore();
+
+    // 2) Pierna delantera (legFront)
+    ctx.save();
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = Math.max(2, size * 0.03);
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.rotate(cfg.legFront);
+    ctx.lineTo(0, legLen);
+    ctx.stroke();
+    ctx.closePath();
+    // Pie delantero
+    ctx.beginPath();
+    ctx.arc(0, legLen, size * 0.05, 0, Math.PI*2);
+    ctx.fillStyle = '#333';
+    ctx.fill();
+    ctx.closePath();
+    ctx.restore();
+
+    // 3) Torso
+    ctx.save();
+    ctx.fillStyle = '#0077cc';
+    ctx.fillRect(-torsoW/2, -torsoH, torsoW, torsoH);
+    // Detalles de ropa
+    ctx.strokeStyle = '#005fa3';
+    ctx.lineWidth = Math.max(1, size * 0.008);
+    ctx.beginPath();
+    ctx.moveTo(-torsoW/2 + torsoW*0.1, -torsoH + torsoH*0.3);
+    ctx.lineTo(+torsoW/2 - torsoW*0.1, -torsoH + torsoH*0.3);
+    ctx.moveTo(-torsoW/2 + torsoW*0.1, -torsoH + torsoH*0.6);
+    ctx.lineTo(+torsoW/2 - torsoW*0.1, -torsoH + torsoH*0.6);
+    ctx.stroke();
+    ctx.closePath();
+    ctx.restore();
+
+    // 4) Brazo trasero (armBack)
+    ctx.save();
+    const shoulderY = -torsoH + size * 0.05;
+    ctx.translate(0, shoulderY);
+    ctx.strokeStyle = '#fdd7b0';
+    ctx.lineWidth = Math.max(2, size * 0.03);
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.rotate(cfg.armBack);
+    ctx.lineTo(0, armLen);
+    ctx.stroke();
+    ctx.closePath();
+    // Mano
+    ctx.beginPath();
+    ctx.arc(0, armLen, size * 0.04, 0, Math.PI*2);
+    ctx.fillStyle = '#fdd7b0';
+    ctx.fill();
+    ctx.closePath();
+    ctx.restore();
+
+    // 5) Brazo delantero (armFront)
+    ctx.save();
+    ctx.translate(0, shoulderY);
+    ctx.strokeStyle = '#fdd7b0';
+    ctx.lineWidth = Math.max(2, size * 0.03);
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.rotate(cfg.armFront);
+    ctx.lineTo(0, armLen);
+    ctx.stroke();
+    ctx.closePath();
+    // Mano
+    ctx.beginPath();
+    ctx.arc(0, armLen, size * 0.04, 0, Math.PI*2);
+    ctx.fillStyle = '#fdd7b0';
+    ctx.fill();
+    ctx.closePath();
+    ctx.restore();
+
+    // 6) Cabeza y rasgos, mirando a la derecha
+    ctx.save();
+    const yHead = -torsoH - headR;
+    // Cara (círculo)
+    ctx.fillStyle = '#fdd7b0';
+    ctx.beginPath();
+    ctx.arc(0, yHead, headR, 0, Math.PI*2);
+    ctx.fill();
+    ctx.closePath();
+
+    // Ojo: solo uno, en el lado derecho (hacia donde mira)
+    const eyeR = size * 0.04;
+    const eyeOffsetY = size * 0.02;
+    const eyeOffsetX = headR * 0.3; // un poco hacia adelante
+    ctx.fillStyle = '#000';
+    ctx.beginPath();
+    ctx.arc(eyeOffsetX, yHead - eyeOffsetY, eyeR, 0, Math.PI*2);
+    ctx.fill();
+    ctx.closePath();
+
+    // Nariz: pequeña punta / triángulo apuntando a la derecha
+    ctx.fillStyle = '#e09f9f';
+    ctx.beginPath();
+    // triángulo en el centro-derecha de la cara
+    ctx.moveTo(headR * 0.1, yHead);
+    ctx.lineTo(headR * 0.25, yHead + size * 0.02);
+    ctx.lineTo(headR * 0.1, yHead + size * 0.04);
+    ctx.closePath();
+    ctx.fill();
+
+    // Boca: arco pequeño orientado hacia la derecha
+    ctx.strokeStyle = '#b03030';
+    ctx.lineWidth = Math.max(1, size * 0.008);
+    // Centro de arco desplazado a la derecha de la nariz
+    const mouthCX = headR * 0.3;
+    const mouthCY = yHead + size * 0.05;
+    const mouthR = size * 0.07;
+    // Dibujamos un arco de -90° a +90° para que abra hacia la derecha
+    ctx.beginPath();
+    ctx.arc(mouthCX, mouthCY, mouthR, -Math.PI/2, Math.PI/2, false);
+    ctx.stroke();
+    ctx.closePath();
+
+    // Cabello rubio largo: ampliamos la zona detrás de la cabeza (izquierda)
+    ctx.fillStyle = '#F9E79F';
+    ctx.beginPath();
+    // Dibujamos una forma que se extiende hacia la izquierda (detrás de la cabeza)
+    // Empezamos en la parte superior de la cabeza:
+    ctx.moveTo(-headR * 0.8, yHead - headR * 0.2);
+    // Curva hacia atrás, más larga:
+    ctx.bezierCurveTo(
+      -headR * 2.0, yHead - headR * 1.0,  // control point alto
+      -headR * 2.5, yHead + headR * 0.2,  // control point medio
+      -headR * 1.0, yHead + headR * 0.8   // punto final detrás (abajo)
+    );
+    // Luego borde inferior del cabello volviendo hacia la cabeza
+    ctx.quadraticCurveTo(
+      -headR * 1.5, yHead + headR * 1.2,
+      0, yHead + headR * 0.9
+    );
+    // Volver a la parte frontal ligeramente
+    ctx.quadraticCurveTo(
+      headR * 0.3, yHead + headR * 0.7,
+      headR * 0.8, yHead + headR * 0.2
+    );
+    // Cerrar borde frontal superior:
+    ctx.quadraticCurveTo(
+      headR * 0.5, yHead - headR * 0.4,
+      -headR * 0.8, yHead - headR * 0.2
+    );
+    ctx.closePath();
+    ctx.fill();
+
+    // Mechones frontales mínimos (hacia la frente, lado derecho)
+    ctx.fillStyle = '#F9D976';
+    ctx.beginPath();
+    ctx.moveTo(headR * 0.2, yHead - headR * 0.6);
+    ctx.quadraticCurveTo(headR * 0.3, yHead - headR * 0.9, headR * 0.4, yHead - headR * 0.6);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.restore();
+
+    ctx.restore(); // fin translate
+  }
+
+  // ----------------------------------------
+  // 2) GENERAR LOS CANVASES DE SPRITE (OFFSCREEN)
+  // ----------------------------------------
+  function generateSpriteFrames() {
+    spriteFrames = [];
+    for (let i = 0; i < NUM_FRAMES; i++) {
+      // Creamos un offscreen canvas: dimensiones algo mayores que spriteHeight para dejar espacio para piernas y pelo
+      const off = document.createElement('canvas');
+      // Ajuste de ancho y alto del offscreen: 
+      // Ancho: lo suficiente para torso+extensión de brazos/pelo (aprox spriteHeight * 0.8)
+      // Alto: torso + piernas + espacio cabeza + pelo (aprox spriteHeight * 1.5)
+      const sw = Math.floor(spriteHeight * 0.8);
+      const sh = Math.floor(spriteHeight * 1.5);
+      off.width = sw;
+      off.height = sh;
+      const offCtx = off.getContext('2d');
+      // Dibujar frame i en este contexto
+      drawGirlFrame(offCtx, spriteHeight, i);
+      spriteFrames.push(off);
+      // Guardar proporción para usar en colisión/dibujo: suponemos ancho constante
+      if (i === 0) {
+        spriteWidth = sw;
+      }
+    }
+  }
+
+  // ----------------------------------------
+  // 3) LÓGICA DE ENTRADA Y REINICIO
+  // ----------------------------------------
+  window.addEventListener('keydown', e => {
+    if (e.code === 'Space' || e.code === 'ArrowUp') {
+      e.preventDefault();
+      doJumpOrRestart();
+    }
+  });
+  window.addEventListener('mousedown', () => doJumpOrRestart());
+  window.addEventListener('touchstart', e => { e.preventDefault(); doJumpOrRestart(); }, {passive:false});
+
+  function doJumpOrRestart() {
+    if (!gameOver) {
+      if (onGround) {
+        vy = jumpVelocity;
+        onGround = false;
+      }
+    } else {
+      restartGame();
+    }
+  }
+
+  function restartGame() {
+    obstacles = [];
+    spawnTimer = 0;
+    spawnInterval = spawnInterval0;
+    speed = 0.9 * cw;
+    score = 0;
+    gameOver = false;
+    lastTime = performance.now();
+    document.getElementById('info').textContent = 'Pulsa ESPACIO o CLIC para saltar.';
+    // Recalcular tamaño y regenerar sprites
+    groundHeight = ch * 0.2;
+    spriteHeight = groundHeight * 1.0;
+    playerY = ch - groundHeight - spriteHeight;
+    generateSpriteFrames();
+    requestAnimationFrame(gameLoop);
+  }
+
+  // ----------------------------------------
+  // 4) Obstáculos: altura = mitad de spriteHeight
+  // ----------------------------------------
+  function spawnObstacle() {
+    const minW = cw * 0.03;
+    const maxW = cw * 0.08;
+    const w = minW + Math.random() * (maxW - minW);
+    // Altura siempre la mitad de spriteHeight:
+    const h = spriteHeight * 0.5;
+    const y = ch - groundHeight - h;
+    obstacles.push({ x: cw + 10, y, w, h });
+  }
+
+  // ----------------------------------------
+  // 5) UPDATE y DIBUJO
+  // ----------------------------------------
+  function update(delta) {
+    if (gameOver) return;
+    // Física de salto
+    vy += gravity * delta;
+    playerY += vy * delta / 1000;
+    if (playerY >= ch - groundHeight - spriteHeight) {
+      playerY = ch - groundHeight - spriteHeight;
+      vy = 0;
+      onGround = true;
+    }
+    // Animación de frames
+    frameTimer += delta;
+    if (frameTimer >= FRAME_DURATION) {
+      frameTimer -= FRAME_DURATION;
+      currentFrame = (currentFrame + 1) % NUM_FRAMES;
+    }
+    // Obstáculos
+    spawnTimer += delta;
+    if (spawnTimer >= spawnInterval) {
+      spawnObstacle();
+      spawnTimer = 0;
+      spawnInterval = spawnInterval0 * (0.8 + Math.random()*0.4);
+    }
+    const moveDist = speed * delta / 1000;
+    for (let i = obstacles.length - 1; i >= 0; i--) {
+      const ob = obstacles[i];
+      ob.x -= moveDist;
+      if (ob.x + ob.w < 0) {
+        obstacles.splice(i,1);
+        score++;
+        speed *= 1.02;
+      }
+    }
+    // Colisión: caja de colisión ancho spriteWidth, alto spriteHeight, en (playerX(), playerY)
+    for (const ob of obstacles) {
+      if (
+        playerX() < ob.x + ob.w &&
+        playerX() + spriteWidth > ob.x &&
+        playerY < ob.y + ob.h &&
+        playerY + spriteHeight > ob.y
+      ) {
+        gameOver = true;
+        const infoDiv = document.getElementById('info');
+        infoDiv.textContent = '¡Game Over! Pulsa ESPACIO o CLIC para reiniciar';
+        break;
+      }
+    }
+  }
+
+  function draw() {
+    // Fondo y suelo
+    ctx.clearRect(0,0,cw,ch);
+    ctx.fillStyle = '#555';
+    ctx.fillRect(0, ch - groundHeight, cw, groundHeight);
+    // Dibujar sprite de la niña
+    const img = spriteFrames[currentFrame];
+    if (img) {
+      // Dibuja el offscreen canvas en la posición del jugador, con la escala spriteWidth x spriteHeight
+      ctx.drawImage(img, playerX(), playerY, spriteWidth, spriteHeight);
+    }
+    // Dibujar obstáculos
+    ctx.fillStyle = '#f55';
+    for (const ob of obstacles) {
+      ctx.fillRect(ob.x, ob.y, ob.w, ob.h);
+    }
+    // Score
+    ctx.fillStyle = '#fff';
+    ctx.font = `${Math.floor(ch * 0.04)}px sans-serif`;
+    ctx.textAlign = 'left';
+    ctx.fillText(`Score: ${score}`, 10, 30);
+    // Debug: caja de colisión (opcional)
+//    ctx.strokeStyle = 'yellow';
+//    ctx.strokeRect(playerX(), playerY, spriteWidth, spriteHeight);
+    if (gameOver) {
+      ctx.fillStyle = 'rgba(0,0,0,0.5)';
+      ctx.fillRect(0, 0, cw, ch);
+      ctx.fillStyle = '#fff';
+      ctx.font = `${Math.floor(ch * 0.08)}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.fillText('¡Game Over!', cw/2, ch/2 - 20);
+      ctx.font = `${Math.floor(ch * 0.04)}px sans-serif`;
+      ctx.fillText('Pulsa ESPACIO o clic para reiniciar', cw/2, ch/2 + 20);
+    }
+  }
+
+  function gameLoop(timestamp) {
+    const delta = timestamp - lastTime;
+    lastTime = timestamp;
+    update(delta);
+    draw();
+    if (!gameOver) requestAnimationFrame(gameLoop);
+  }
+
+  // ----------------------------------------
+  // 6) Manejar resize de ventana
+  // ----------------------------------------
+  window.addEventListener('resize', () => {
+    cw = window.innerWidth; ch = window.innerHeight;
+    canvas.width = cw; canvas.height = ch;
+    groundHeight = ch * 0.2;
+    spriteHeight = groundHeight * 1.0;
+    playerY = ch - groundHeight - spriteHeight;
+    restartGame();
+  });
+
+  // ----------------------------------------
+  // INICIALIZAR
+  // ----------------------------------------
+  lastTime = performance.now();
+  generateSpriteFrames();
+  restartGame();
+  </script>
+</body>
+</html>
